@@ -4,9 +4,8 @@ import re, string
 import torch
 import torch.nn as nn
 from sklearn.preprocessing import LabelEncoder
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset, random_split
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import Dataset
 import torch.nn.init as init
 import torch.nn.functional as F
 from torch.nn.utils import weight_norm
@@ -98,6 +97,15 @@ class MyDataset(Dataset):
 
 dataset = MyDataset(input_ids_by_label)
 
+dataset_size = len(dataset)
+
+# spitting dataset into train and test
+
+train_size = int(dataset_size * 0.8) # 80% of data for training
+test_size = dataset_size - train_size # 20% of data for testing
+
+train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+
 batch_size = 32
 shuffle = True
 num_workers = 0
@@ -105,21 +113,28 @@ num_workers = 0
 # print(len(dataset))
 print(len(dataset[0]))
 
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
+train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
+test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
 
 
 class MyModel(torch.nn.Module):
     def __init__(self, num_labels, bert_model):
         super(MyModel, self).__init__()
         self.bert = bert_model
-        self.fc = weight_norm(torch.nn.Linear(bert_model.config.hidden_size, num_labels, bias = False))
+        for param in self.bert.parameters():
+            param.requires_grad = False
+        self.fc1 = torch.nn.Linear(bert_model.config.hidden_size, 512)
+        self.fc2 = torch.nn.Linear(512, 256)
+        self.fc3 = weight_norm(torch.nn.Linear(256, num_labels, bias = False))
 
     def forward(self, input_ids):
         outputs = self.bert(input_ids)
         last_hidden_state = outputs.last_hidden_state
         pooled_output, _ = torch.max(last_hidden_state, dim=1)
         pooled_output = F.normalize(pooled_output)
-        logits = self.fc(pooled_output)
+        hidden1 = self.fc1(pooled_output)
+        hidden2 = self.fc2(hidden1)
+        logits = self.fc3(hidden2)
         # normalized_logits = F.normalize(logits, p=2, dim=1)
 
         return logits, pooled_output, last_hidden_state
@@ -174,7 +189,7 @@ model2 = MyModel(10, model)
 lightning_module = MyLightningModule(model2, 10)
 
 trainer = pl.Trainer(max_epochs=3)
-trainer.fit(lightning_module, dataloader)
+trainer.fit(lightning_module, train_dataloader)
 
 
 
