@@ -9,12 +9,17 @@ from torch.nn.utils.rnn import pad_sequence
 import torch.nn.init as init
 import torch.nn.functional as F
 from torch.nn.utils import weight_norm
+import pytorch_lightning as pl
+from pytorch_lightning.loggers import TensorBoardLogger
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim import Adam
+from torch.utils.tensorboard import SummaryWriter
 
 tokenizer_class, pretrained_weights = (AutoTokenizer, 'allenai/scibert_scivocab_cased')
 tokenizer = tokenizer_class.from_pretrained(pretrained_weights)
 
 with open("/Users/senyaisavnina/Downloads/extracted_data_w_citations.json", "r") as f:
-        dataset = json.load(f)[:10]
+        dataset = json.load(f)[:100]
 
 def strip_links(text):
     link_regex    = re.compile('((https?):((//)|(\\\\))+([\w\d:#@%/;$()~_?\+-=\\\.&](#!)?)*)', re.DOTALL)
@@ -37,7 +42,6 @@ def strip_all_entities(text):
     return ' '.join(words)
 
 
-
 abstracts_by_label = {}
 for item in dataset:
     label = item["paperId"]
@@ -49,7 +53,6 @@ for item in dataset:
       if referenced_item is not None:
         abstracts_by_label[label].append(strip_all_entities(strip_links(str(referenced_item))))
 print(len(abstracts_by_label))
-
 
 
 input_ids_by_label = {}
@@ -123,9 +126,10 @@ class MyModel(torch.nn.Module):
         self.bert = bert_model
         for param in self.bert.parameters():
             param.requires_grad = False
-        self.fc1 = torch.nn.Linear(bert_model.config.hidden_size, 512)
-        self.fc2 = torch.nn.Linear(512, 256)
-        self.fc3 = weight_norm(torch.nn.Linear(256, num_labels, bias = False))
+        self.fc1 = nn.Linear(bert_model.config.hidden_size, 512)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = weight_norm(nn.Linear(256, num_labels, bias=False))
 
     def forward(self, input_ids):
         outputs = self.bert(input_ids)
@@ -133,16 +137,17 @@ class MyModel(torch.nn.Module):
         pooled_output, _ = torch.max(last_hidden_state, dim=1)
         pooled_output = F.normalize(pooled_output)
         hidden1 = self.fc1(pooled_output)
+        hidden1 = self.relu(hidden1)
         hidden2 = self.fc2(hidden1)
+        hidden2 = self.relu(hidden2)
         logits = self.fc3(hidden2)
-        # normalized_logits = F.normalize(logits, p=2, dim=1)
 
         return logits, pooled_output, last_hidden_state
 
 model = AutoModel.from_pretrained('allenai/scibert_scivocab_cased')    
-model2  = MyModel(10, model)
+model2  = MyModel(100, model)
 
-batch = next(iter(dataloader))
+batch = next(iter(train_dataloader))
 print("batch: ", batch)
 input_ids = batch[0]
 print("input_ids: ", input_ids)
@@ -162,34 +167,62 @@ def custom_loss(logits, labels, s=10.0, m=0.5):
     loss = -torch.log(torch.exp(s * cos_theta_y_m) / (torch.exp(s * cos_theta_y_m) + sum_exp_s_cos_theta))
     return loss.mean()
 
-import pytorch_lightning as pl
+def accuracy(logits, labels):
+    probs = torch.softmax(logits, dim=1)
+    preds = torch.argmax(probs, dim=1)
+    correct = (preds == labels).sum().item()
+    total = labels.size(0)
+    acc = correct / total
+    return acc
+
+
+logger = TensorBoardLogger('logs/')
+
 
 class MyLightningModule(pl.LightningModule):
-    def __init__(self, model, num_classes, lr=1e-5, s=10.0, m=0.5):
+    def __init__(self, model, num_classes, lr=5e-5, s=10.0, m=0.5):
         super().__init__()
         self.model = model
         self.num_classes = num_classes
         self.lr = lr
         self.s = s
         self.m = m
+        self.train_accs = []
+        self.test_accs = []
 
     def training_step(self, batch):
         input_ids_padded = batch[0]
         labels = batch[1]
         logits, _, _ = self.model(input_ids_padded)
         loss = custom_loss(logits, labels, self.s, self.m)
-        self.log('train_loss', loss)
+        acc = accuracy(logits, labels)
+        self.log('train_loss', loss, on_epoch=True, on_step=False)
+        acc = accuracy(logits, labels)
+        self.log('train_acc', acc, on_epoch=True, on_step=False)
         return loss
 
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        return optimizer
-    
-model2 = MyModel(10, model)
-lightning_module = MyLightningModule(model2, 10)
+    def validation_step(self, batch, batch_idx):
+        input_ids_padded = batch[0]
+        labels = batch[1]
+        logits, _, _ = self.model(input_ids_padded)
+        loss = custom_loss(logits, labels, self.s, self.m)
+        acc = accuracy(logits, labels)
+        self.log('val_loss', loss, on_epoch=True, on_step=False)
+        acc = accuracy(logits, labels)
+        self.log('val_acc', acc, on_epoch=True, on_step=False)
 
-trainer = pl.Trainer(max_epochs=3)
-trainer.fit(lightning_module, train_dataloader)
+    def configure_optimizers(self):
+        optimizer = Adam(self.parameters(), lr=self.lr)
+        
+        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=1)
+        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "val_loss"}
+    
+model2 = MyModel(100, model)
+lightning_module = MyLightningModule(model2, 100)
+
+trainer = pl.Trainer(max_epochs=10, logger=logger, log_every_n_steps=20)
+trainer.fit(lightning_module, train_dataloaders=train_dataloader, val_dataloaders=test_dataloader)
+
 
 
 
