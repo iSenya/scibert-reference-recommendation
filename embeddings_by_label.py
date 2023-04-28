@@ -1,14 +1,11 @@
-import json
+import json, os, re, string
+from datetime import datetime
 from transformers import *
-import re, string
 import torch
 import torch.nn as nn
 from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import DataLoader, Dataset, random_split
-from torch.nn.utils.rnn import pad_sequence
-import torch.nn.init as init
 import torch.nn.functional as F
-from torch.nn.utils import weight_norm
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -128,18 +125,22 @@ class MyModel(torch.nn.Module):
             param.requires_grad = False
         self.fc1 = nn.Linear(bert_model.config.hidden_size, 512)
         self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(512, 256)
-        self.fc3 = weight_norm(nn.Linear(256, num_labels, bias=False))
+        self.fc2 = nn.Linear(self.fc1.out_features, 256)
+        self.fc3 = nn.Linear(self.fc2.out_features, num_labels, bias=False)
 
     def forward(self, input_ids):
         outputs = self.bert(input_ids)
         last_hidden_state = outputs.last_hidden_state
         pooled_output, _ = torch.max(last_hidden_state, dim=1)
-        pooled_output = F.normalize(pooled_output)
         hidden1 = self.fc1(pooled_output)
         hidden1 = self.relu(hidden1)
         hidden2 = self.fc2(hidden1)
-        hidden2 = self.relu(hidden2)
+        hidden2 = F.normalize(self.relu(hidden2))
+
+        # normalize the rows of fc3 weights
+        norm = self.fc3.weight.norm(p=2, dim=1, keepdim=True)
+        self.fc3.weight = nn.Parameter(self.fc3.weight.div(norm))
+
         logits = self.fc3(hidden2)
 
         return logits, pooled_output, last_hidden_state
@@ -178,6 +179,9 @@ def accuracy(logits, labels):
 
 logger = TensorBoardLogger('logs/')
 
+# create a new directory for the logs
+log_dir = os.path.join("logs", datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+os.makedirs(log_dir, exist_ok=True)
 
 class MyLightningModule(pl.LightningModule):
     def __init__(self, model, num_classes, lr=5e-5, s=10.0, m=0.5):
@@ -187,8 +191,8 @@ class MyLightningModule(pl.LightningModule):
         self.lr = lr
         self.s = s
         self.m = m
-        self.train_accs = []
-        self.test_accs = []
+
+        self.writer = SummaryWriter(log_dir=log_dir)
 
     def training_step(self, batch):
         input_ids_padded = batch[0]
@@ -196,9 +200,10 @@ class MyLightningModule(pl.LightningModule):
         logits, _, _ = self.model(input_ids_padded)
         loss = custom_loss(logits, labels, self.s, self.m)
         acc = accuracy(logits, labels)
-        self.log('train_loss', loss, on_epoch=True, on_step=False)
-        acc = accuracy(logits, labels)
-        self.log('train_acc', acc, on_epoch=True, on_step=False)
+        self.log('train_loss', loss, on_epoch=True)
+        self.log('train_acc', acc, on_epoch=True)
+        self.writer.add_scalar('Train/Loss', loss, self.global_step)
+        self.writer.add_scalar('Train/Accuracy', acc, self.global_step)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -206,14 +211,16 @@ class MyLightningModule(pl.LightningModule):
         labels = batch[1]
         logits, _, _ = self.model(input_ids_padded)
         loss = custom_loss(logits, labels, self.s, self.m)
+        ###### 
         acc = accuracy(logits, labels)
-        self.log('val_loss', loss, on_epoch=True, on_step=False)
-        acc = accuracy(logits, labels)
-        self.log('val_acc', acc, on_epoch=True, on_step=False)
+        self.log('val_loss', loss, on_epoch=True)
+        self.log('val_acc', acc, on_epoch=True)
+        self.writer.add_scalar('Val/Loss', loss, self.global_step)
+        self.writer.add_scalar('Val/Accuracy', acc, self.global_step)
 
     def configure_optimizers(self):
         optimizer = Adam(self.parameters(), lr=self.lr)
-        
+
         scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=1)
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "val_loss"}
     
