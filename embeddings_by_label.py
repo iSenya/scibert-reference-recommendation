@@ -184,7 +184,7 @@ log_dir = os.path.join("logs", datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
 os.makedirs(log_dir, exist_ok=True)
 
 class MyLightningModule(pl.LightningModule):
-    def __init__(self, model, num_classes, lr=5e-5, s=10.0, m=0.5):
+    def __init__(self, model, num_classes, lr=3e-4, s=10.0, m=0.5):
         super().__init__()
         self.model = model
         self.num_classes = num_classes
@@ -227,7 +227,7 @@ class MyLightningModule(pl.LightningModule):
 model2 = MyModel(100, model)
 lightning_module = MyLightningModule(model2, 100)
 
-trainer = pl.Trainer(max_epochs=10, logger=logger, log_every_n_steps=20)
+trainer = pl.Trainer(max_epochs=50, logger=logger, log_every_n_steps=20)
 trainer.fit(lightning_module, train_dataloaders=train_dataloader, val_dataloaders=test_dataloader)
 
 
