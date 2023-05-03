@@ -1,6 +1,6 @@
-import json, os, re, string
+import json, os, re, string, random, langdetect
 from datetime import datetime
-from transformers import *
+from transformers import AutoModel, AutoTokenizer
 import torch
 import torch.nn as nn
 from sklearn.preprocessing import LabelEncoder
@@ -15,8 +15,22 @@ from torch.utils.tensorboard import SummaryWriter
 tokenizer_class, pretrained_weights = (AutoTokenizer, 'allenai/scibert_scivocab_cased')
 tokenizer = tokenizer_class.from_pretrained(pretrained_weights)
 
-with open("/Users/senyaisavnina/Downloads/extracted_data_w_citations.json", "r") as f:
-        dataset = json.load(f)[:100]
+file_paths = [
+    "/Users/senyaisavnina/Downloads/extracted_data_w_citations.json",
+    "/Users/senyaisavnina/Downloads/extracted_data_w_citations_1.json",
+    "/Users/senyaisavnina/Downloads/extracted_data_w_citations_2.json",
+]
+
+full_dataset = []
+
+for path in file_paths:
+    with open(path, "r") as f:
+        dataset = json.load(f)
+        full_dataset.extend(dataset)
+
+# print(len(full_dataset))
+
+# data preprocessing functions
 
 def strip_links(text):
     link_regex    = re.compile('((https?):((//)|(\\\\))+([\w\d:#@%/;$()~_?\+-=\\\.&](#!)?)*)', re.DOTALL)
@@ -38,19 +52,45 @@ def strip_all_entities(text):
                 words.append(word)
     return ' '.join(words)
 
+# Define the size of the random sample
+sample_size = 500
 
+# Create a random sample of the full dataset
+random_sample = random.sample(full_dataset, sample_size)
+
+# Initialize the dictionary to store the abstracts by label
 abstracts_by_label = {}
-for item in dataset:
+
+# Iterate over each item in the random sample
+for item in random_sample:
     label = item["paperId"]
     abstract = item["abstract"]
-    if label not in abstracts_by_label:
-        abstracts_by_label[label] = []
-    abstracts_by_label[label].append(strip_all_entities(strip_links(str(abstract))))
-    for referenced_item in item["referenced_abstracts"]:
-      if referenced_item is not None:
-        abstracts_by_label[label].append(strip_all_entities(strip_links(str(referenced_item))))
+    if abstract and isinstance(abstract, str):
+        try:
+            # Detect the language of the abstract
+            lang = langdetect.detect(abstract)
+            # Check if the abstract is in English
+            if lang == 'en':
+                if label not in abstracts_by_label:
+                    abstracts_by_label[label] = []
+                abstracts_by_label[label].append(strip_all_entities(strip_links(str(abstract))))
+                for referenced_item in item["referenced_abstracts"]:
+                    if referenced_item and isinstance(referenced_item, str):
+                        try:
+                            # Detect the language of the referenced abstract
+                            lang = langdetect.detect(referenced_item)
+                            # Check if the referenced abstract is in English
+                            if lang == 'en':
+                                abstracts_by_label[label].append(strip_all_entities(strip_links(str(referenced_item))))
+                        except langdetect.lang_detect_exception.LangDetectException:
+                            pass
+        except langdetect.lang_detect_exception.LangDetectException:
+            pass
+
+# Print the size of the resulting dictionary
 print(len(abstracts_by_label))
 
+num_labels = len(abstracts_by_label)
 
 input_ids_by_label = {}
 for label, referenced_abstracts in abstracts_by_label.items():
@@ -99,6 +139,8 @@ dataset = MyDataset(input_ids_by_label)
 
 dataset_size = len(dataset)
 
+print(dataset_size)
+
 # spitting dataset into train and test
 
 train_size = int(dataset_size * 0.8) # 80% of data for training
@@ -111,7 +153,7 @@ shuffle = True
 num_workers = 0
 
 # print(len(dataset))
-print(len(dataset[0]))
+# print(len(dataset[0]))
 
 train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
 test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
@@ -149,12 +191,14 @@ model = AutoModel.from_pretrained('allenai/scibert_scivocab_cased')
 model2  = MyModel(100, model)
 
 batch = next(iter(train_dataloader))
-print("batch: ", batch)
+# print("batch: ", batch)
+
 input_ids = batch[0]
-print("input_ids: ", input_ids)
+# print("input_ids: ", input_ids)
+
 labels = batch[1]
+
 print("labels: ", labels)
-# break
 logits, _, _ = model2(input_ids)
 print(logits.shape)
 
@@ -168,14 +212,23 @@ def custom_loss(logits, labels, s=10.0, m=0.5):
     loss = -torch.log(torch.exp(s * cos_theta_y_m) / (torch.exp(s * cos_theta_y_m) + sum_exp_s_cos_theta))
     return loss.mean()
 
-def accuracy(logits, labels):
-    probs = torch.softmax(logits, dim=1)
-    preds = torch.argmax(probs, dim=1)
-    correct = (preds == labels).sum().item()
+def accuracy(logits, labels, top_k=10):
+    """
+    Computes the top-k accuracy of the predictions with respect to the true labels.
+    
+    Args:
+        logits (torch.Tensor): A tensor of shape [batch_size, num_classes] containing the predicted logits.
+        labels (torch.Tensor): A tensor of shape [batch_size] containing the true labels.
+        top_k (int): The number of top predictions to consider (default: 10).
+        
+    Returns:
+        float: The top-k accuracy of the predictions.
+    """
+    _, preds = logits.topk(top_k, dim=1)
+    correct = (preds == labels.unsqueeze(1)).sum().item()
     total = labels.size(0)
     acc = correct / total
     return acc
-
 
 logger = TensorBoardLogger('logs/')
 
@@ -224,10 +277,10 @@ class MyLightningModule(pl.LightningModule):
         scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=1)
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "val_loss"}
     
-model2 = MyModel(100, model)
-lightning_module = MyLightningModule(model2, 100)
+model2 = MyModel(num_labels, model)
+lightning_module = MyLightningModule(model2, num_labels)
 
-trainer = pl.Trainer(max_epochs=50, logger=logger, log_every_n_steps=20)
+trainer = pl.Trainer(max_epochs=20, logger=logger, log_every_n_steps=20)
 trainer.fit(lightning_module, train_dataloaders=train_dataloader, val_dataloaders=test_dataloader)
 
 
