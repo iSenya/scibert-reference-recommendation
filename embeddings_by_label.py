@@ -188,7 +188,6 @@ class MyModel(torch.nn.Module):
         return logits, pooled_output, last_hidden_state
 
 model = AutoModel.from_pretrained('allenai/scibert_scivocab_cased')    
-model2  = MyModel(100, model)
 
 batch = next(iter(train_dataloader))
 # print("batch: ", batch)
@@ -209,7 +208,9 @@ def custom_loss(logits, labels, s=10.0, m=0.5):
     cos_theta_j = logits
     exp_s_cos_theta = torch.exp(s * cos_theta_j)
     sum_exp_s_cos_theta = exp_s_cos_theta.sum(dim=1)
-    loss = -torch.log(torch.exp(s * cos_theta_y_m) / (torch.exp(s * cos_theta_y_m) + sum_exp_s_cos_theta))
+    loss = -torch.log(torch.exp(s * cos_theta_y_m) / 
+                      (torch.exp(s * cos_theta_y_m) + 
+                       sum_exp_s_cos_theta))
     return loss.mean()
 
 def accuracy(logits, labels, top_k=10):
