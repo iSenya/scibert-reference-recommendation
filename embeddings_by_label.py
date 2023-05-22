@@ -11,6 +11,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
+from preprocessing import strip_links, strip_all_entities
 
 tokenizer_class, pretrained_weights = (AutoTokenizer, 'allenai/scibert_scivocab_cased')
 tokenizer = tokenizer_class.from_pretrained(pretrained_weights)
@@ -29,28 +30,6 @@ for path in file_paths:
         full_dataset.extend(dataset)
 
 # print(len(full_dataset))
-
-# data preprocessing functions
-
-def strip_links(text):
-    link_regex    = re.compile('((https?):((//)|(\\\\))+([\w\d:#@%/;$()~_?\+-=\\\.&](#!)?)*)', re.DOTALL)
-    links         = re.findall(link_regex, text)
-    for link in links:
-        text = text.replace(link[0], ', ')    
-    return text
-
-def strip_all_entities(text):
-    entity_prefixes = ['@','#']
-    for separator in  string.punctuation:
-        if separator not in entity_prefixes :
-            text = text.replace(separator,' ')
-    words = []
-    for word in text.split():
-        word = " ".join(word.strip().lower() for word in re.split('#|_', word))
-        if word:
-            if word not in entity_prefixes:
-                words.append(word)
-    return ' '.join(words)
 
 # Define the size of the random sample
 sample_size = 500
