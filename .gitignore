@@ -3,3 +3,5 @@ logs
 data
 sampling.py
 model_evaluation.py
+embedding_vectors.json
+cleaned_references.json
