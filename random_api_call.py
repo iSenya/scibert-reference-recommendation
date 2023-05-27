@@ -12,6 +12,7 @@ config_path = '/Users/senyaisavnina/Downloads/thesis/scibert-reference-recommend
 model_path = '/Users/senyaisavnina/Downloads/thesis/scibert-reference-recommendation/logs/lightning_logs/version_14/checkpoints/epoch=19-step=8220.ckpt'
 config = AutoConfig.from_pretrained(config_path)
 
+paper_ids = set()
 
 checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
 state_dict = checkpoint["state_dict"]
@@ -47,7 +48,7 @@ tokenizer = AutoTokenizer.from_pretrained("allenai/scibert_scivocab_cased", mode
 
 # Retrieve data for the initial paper
 url = "https://api.semanticscholar.org/graph/v1/paper/"
-paperId = "e27c76d001f9759636da27126f162cd44a1a6505"
+paperId = "bdf7bf9e81a6c12e22323d0402885b2ba62f623e"
 attributes = "paperId,title,abstract,references.title,references.abstract,references.paperId"
 query = f"{url}{paperId}?fields={attributes}"
 resp = requests.get(query)
@@ -95,32 +96,27 @@ for reference in references:
             with torch.no_grad():
                 embedding_vector = my_model(input_ids)
 
-            # print(title)
-            # print(embedding_vector)
-
-            # with torch.no_grad():
-            #     embedding_vector = my_model(input_ids)
-
-            # print(title)
-            # print(embedding_vector)
-            # exit()
-
             # Append the paper ID, title, and embedding vector to the list
-            cleaned_references.append({
-                "paperId": ref_paper_id,
-                "title": title,
-                "embedding_vector": embedding_vector.tolist()[0]
-            })
+            if ref_paper_id not in paper_ids:
+                cleaned_references.append({
+                    "paperId": ref_paper_id,
+                    "title": title,
+                    "embedding_vector": embedding_vector.tolist()[0]
+                })
+                paper_ids.add(ref_paper_id)
 
 print(len(cleaned_references))
 
 # Set the desired number of items and initial offset
 
 random_paper_url = "https://api.semanticscholar.org/graph/v1/paper/search"
-desired_num_items = 1000
+desired_num_items = 2000
 offset = 0
+max_retries = 3  # Maximum number of retries
+retry_wait_time = 10  # Duration to wait before retrying in seconds
 items_per_request = 90
-max_retries = 3
+retries = 0
+success = False
 
 # Retrieve data for random papers until the desired number of items is reached
 while len(cleaned_references) < desired_num_items:
@@ -131,7 +127,7 @@ while len(cleaned_references) < desired_num_items:
     # Define the parameters as a dictionary
     params = {
         "query": "and",
-        "fields": "title,abstract",
+        "fields": "title,abstract,references.paperId,references.abstract,references.title",
         "limit": num_items_to_retrieve,
         "offset": offset
     }
@@ -141,8 +137,13 @@ while len(cleaned_references) < desired_num_items:
 
     while retries < max_retries and not success:
         # Make the GET request with the updated parameters
-        print(params)
         response = requests.get(random_paper_url, params=params)
+
+        if response.status_code == 429:  # Rate limit exceeded
+            print("Rate limit exceeded. Waiting before retrying...")
+            time.sleep(retry_wait_time)
+            retries += 1
+            continue
 
         try:
             random_papers = response.json()
@@ -166,6 +167,9 @@ while len(cleaned_references) < desired_num_items:
     if not success:
         print("Failed to retrieve random papers. Exiting loop.")
         break
+    
+    if response.status_code == 200:
+        success = True
 
     for random_paper in random_papers['data']:
         ref_paper_id = random_paper.get("paperId", "")
@@ -193,11 +197,13 @@ while len(cleaned_references) < desired_num_items:
             with torch.no_grad():
                 embedding_vector = my_model(input_ids)
             # Append the paper ID, title, and embedding vector to the list
-            cleaned_references.append({
-                "paperId": ref_paper_id,
-                "title": title,
-                "embedding_vector": embedding_vector.tolist()[0]
-            })
+            if ref_paper_id not in paper_ids:
+                cleaned_references.append({
+                    "paperId": ref_paper_id,
+                    "title": title,
+                    "embedding_vector": embedding_vector.tolist()[0]
+                })
+                paper_ids.add(ref_paper_id)
 
         # Iterate over the references of the random paper
         for reference in references:
@@ -224,17 +230,20 @@ while len(cleaned_references) < desired_num_items:
                     embedding_vector = my_model(input_ids)
 
                 # Append the reference's paper ID, title, and embedding vector to the list
-                cleaned_references.append({
-                    "paperId": ref_paper_id,
-                    "title": ref_title,
-                    "embedding_vector": embedding_vector.tolist()[0]
-                })
+                if ref_paper_id not in paper_ids:
+                    cleaned_references.append({
+                        "paperId": ref_paper_id,
+                        "title": ref_title,
+                        "embedding_vector": embedding_vector.tolist()[0]
+                    })
+                    paper_ids.add(ref_paper_id)
 
     # Update the offset for the next iteration
     offset += num_items_to_retrieve
 
     # Wait for a short duration to avoid rate limits
-    time.sleep(10)
+    time.sleep(retry_wait_time)
+
 
 # Save the cleaned references to a JSON file
 output_file = "cleaned_references.json"
