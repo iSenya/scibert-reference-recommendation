@@ -11,11 +11,13 @@ with open("cleaned_references.json", "r") as f:
     cleaned_references = json.load(f)
 
 print(len(cleaned_references))
+# references_subset = cleaned_references[:1000]
+# print(len(references_subset))
 
 model_path = '/Users/senyaisavnina/Downloads/thesis/scibert-reference-recommendation/logs/lightning_logs/version_14/checkpoints/epoch=19-step=8220.ckpt'
 checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
 state_dict = checkpoint["state_dict"]
-bert_model = AutoModel.from_pretrained('allenai/scibert_scivocab_uncased')
+bert_model = AutoModel.from_pretrained('allenai/scibert_scivocab_cased')
 my_model = ModelForEval(bert_model)
 
 my_model.load_state_dict(
@@ -74,6 +76,7 @@ for ref in cleaned_references:
     similarity_score = torch.dot(my_embedding_tensor, ref_embedding_tensor)
     similarity_scores.append((ref["title"], similarity_score.item()))
 
+
 # Sort the similarity scores in descending order
 similarity_scores.sort(key=lambda x: x[1], reverse=True)
 
@@ -87,50 +90,33 @@ true_ref_titles = [ref['title'] for ref in cleaned_references[:33]]
 
 # Separate the scores and titles
 scores = [score for _, score in normalized_scores]
-
-# Create a list of indices to represent the position of each score
-indices = np.arange(len(scores))
-
-# Plot the histogram for other references
-plt.hist(indices, bins=len(scores), weights=scores, color='skyblue', edgecolor='black', label='Other References')
-
-# Highlight the true references
-true_ref_indices = [i for i, (title, _) in enumerate(normalized_scores) if title in true_ref_titles]
-plt.hist([indices[i] for i in true_ref_indices], bins=len(scores), weights=[scores[i] for i in true_ref_indices], color='pink', edgecolor='black', label='True References')
-
-# Set the y-axis label
-plt.ylabel('Normalized Similarity Score')
-
-# Add a legend
-plt.legend()
-
-# Adjust the layout to prevent overlapping of bars
-plt.tight_layout()
-
-# Show the plot
-plt.show()
+titles = [title for title, _ in normalized_scores]
 
 # # Plot the histogram
-# plt.hist(scores, bins=100, color='skyblue', edgecolor='black', density=True)
+# plt.hist(scores, bins=10, color='skyblue', edgecolor='black', density=True)
 
 # # Highlight the true references
 # true_ref_indices = [i for i, title in enumerate(titles) if title in true_ref_titles]
-# plt.hist([scores[i] for i in true_ref_indices], bins=10, color='pink', edgecolor='black', density=True, alpha=0.5)
+# plt.hist([scores[i] for i in true_ref_indices], bins=10, color='pink', edgecolor='black', alpha  = 0.5, density=True)
 
 # # Set the labels and title
-# plt.xlabel('Normalized Similarity Score')
+# plt.xlabel('Normalized Similarity Score', fontsize=10)
+# # Rotate and align the x-axis labels
 # plt.ylabel('Frequency')
-# plt.title('Histogram of Normalized Similarity Scores')
+
+# # Adjust the layout to prevent overlapping of bars
+# plt.tight_layout()
+
+# # Add a legend
+# plt.legend()
 
 # # Show the plot
 # plt.show()
 
-
-# # Print the top 10 titles
-# # Print the top 10 predictions
-# print("Top 40 predictions:")
-# for title, score in similarity_scores[:40]:
-#     print(title, score)
+# Print the top 40 predictions
+print("Top 40 predictions:")
+for title, score in similarity_scores[:20]:
+    print(title, score)
 
 # # Print the prediction with the minimum score
 # print("Prediction with the minimum score:")
@@ -138,12 +124,37 @@ plt.show()
 # print(min_title, min_score)
 
 
-# for k in [200, 500]:
-#     true_pos = 0
-#     for title, score in similarity_scores[:k]:
-#         if title in true_ref_titles:
-#             true_pos += 1
-#     print(f'Top-{k} precision = {true_pos/k}, total true refs in range = {true_pos}')
-# print(f'Overall distribution = {33/len(cleaned_references)}')
+for k in [200, 500]:
+    true_pos = 0
+    for title, score in similarity_scores[:k]:
+        if title in true_ref_titles:
+            true_pos += 1
+    print(f'Top-{k} precision = {true_pos/k}, total true refs in range = {true_pos}')
+print(f'Overall distribution = {33/len(cleaned_references)}')
+
+# # Create a list of indices to represent the position of each score
+# indices = np.arange(len(scores))
+
+# # Plot the histogram for other references
+# plt.hist(indices, bins=len(scores), weights=scores, color='skyblue', label='Other References')
+
+# # Highlight the true references
+# true_ref_indices = [i for i, (title, _) in enumerate(normalized_scores) if title in true_ref_titles]
+# plt.hist([indices[i] for i in true_ref_indices], bins=len(scores), weights=[scores[i] for i in true_ref_indices], color='black', edgecolor='black', label='True References')
+
+# # Set the y-axis label
+# plt.ylabel('Normalized Similarity Score')
+
+# # Add a legend
+# plt.legend()
+
+# # Adjust the layout to prevent overlapping of bars
+# plt.tight_layout()
+
+# # Show the plot
+# plt.show()
+
+
+
 
 

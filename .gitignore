@@ -3,4 +3,6 @@ logs
 data
 sampling.py
 embedding_vectors.json
+cleaned_references_1000.json
 cleaned_references.json
+dataset/
