@@ -110,7 +110,7 @@ print(len(cleaned_references))
 # Set the desired number of items and initial offset
 
 random_paper_url = "https://api.semanticscholar.org/graph/v1/paper/search"
-desired_num_items = 2000
+desired_num_items = 10000
 offset = 0
 max_retries = 3  # Maximum number of retries
 retry_wait_time = 10  # Duration to wait before retrying in seconds
@@ -246,7 +246,7 @@ while len(cleaned_references) < desired_num_items:
 
 
 # Save the cleaned references to a JSON file
-output_file = "cleaned_references.json"
+output_file = "cleaned_references_10000.json"
 with open(output_file, "w") as f:
     json.dump(cleaned_references, f, indent=4)
 print("Cleaned references saved to", output_file)
