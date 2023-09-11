@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
 SEMANTIC_SCHOLAR_API_URL = 'https://api.semanticscholar.org/graph/v1/'
-API_KEY = 't5z5FBumibq2Z4tlNTGBaM31fzrfDhJ1PirrKTJ4'
+API_KEY = 'your api key'
 
 headers = {
     'x-api-key': API_KEY
