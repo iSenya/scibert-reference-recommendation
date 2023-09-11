@@ -5,3 +5,6 @@ sampling.py
 model_evaluation.py
 embedding_vectors.json
 cleaned_references.json
+/dataset
+/logs
+cleaned_references_10000.json
